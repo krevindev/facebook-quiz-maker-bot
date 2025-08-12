@@ -139,10 +139,10 @@ def ask_question(recipient_id):
     # Build the message with question + choices
     question_text = (
         f"{q['question']}\n"
-        f"A) {q['options']['A']}\n"
-        f"B) {q['options']['B']}\n"
-        f"C) {q['options']['C']}\n"
-        f"D) {q['options']['D']}"
+        f"A. {q['options']['A']}\n"
+        f"B. {q['options']['B']}\n"
+        f"C. {q['options']['C']}\n"
+        f"D. {q['options']['D']}"
     )
     
     # Send question with quick replies A-D
