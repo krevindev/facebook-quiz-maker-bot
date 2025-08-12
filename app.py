@@ -1,124 +1,137 @@
 import os
-import json
-import requests
 import re
+import requests
 from flask import Flask, request
 from PyPDF2 import PdfReader
+import docx
+from io import BytesIO
 
-PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "")
-VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "")
+# --- CONFIG ---
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "verify_token")
+PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 MODEL = "mistralai/mixtral-8x7b-instruct"
 
 app = Flask(__name__)
 
-# --- Menu State ---
-user_state = {}  # {user_id: {"mode": "menu"|"quiz", "questions": [...], "current": 0}}
+# In-memory session store
+user_sessions = {}
 
-# --- Facebook Send ---
-def send_message(recipient_id, text, quick_replies=None):
-    payload = {
-        "recipient": {"id": recipient_id},
-        "message": {"text": text}
-    }
-    if quick_replies:
-        payload["message"]["quick_replies"] = quick_replies
-    resp = requests.post(
-        f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}",
-        json=payload
+# --- FB Send Functions ---
+def send_message(recipient_id, text):
+    print(f"Sending to {recipient_id}: {text}")
+    url = f"https://graph.facebook.com/v17.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    payload = {"recipient": {"id": recipient_id}, "message": {"text": text}}
+    r = requests.post(url, json=payload)
+    if r.status_code != 200:
+        print(f"FB send error: {r.status_code} {r.text}")
+
+def send_menu(recipient_id):
+    send_message(recipient_id, 
+        "📋 Main Menu:\n"
+        "1️⃣ Upload a file for quiz\n"
+        "2️⃣ Topic-based advanced nursing quiz\n"
+        "3️⃣ Random advanced nursing quiz\n\n"
+        "Please reply with 1, 2, or 3."
     )
-    if resp.status_code != 200:
-        print("Send error:", resp.status_code, resp.text)
+    user_sessions[recipient_id] = {"state": "awaiting_menu"}
 
-# --- Menu ---
-def show_main_menu(user_id):
-    send_message(
-        user_id,
-        "📋 Main Menu - Choose an option:",
-        quick_replies=[
-            {"content_type": "text", "title": "📂 Upload File Topic", "payload": "UPLOAD_FILE"},
-            {"content_type": "text", "title": "🎯 Random Nursing Quiz", "payload": "RANDOM_QUIZ"}
-        ]
-    )
-    user_state[user_id] = {"mode": "menu"}
-
-# --- Question Formatting ---
-def format_question(q):
-    opts = q["options"]
-    return f"{q['question']}\n\n" + "\n".join([f"{chr(65+i)}) {opt}" for i, opt in enumerate(opts)])
-
-def send_question(user_id):
-    state = user_state[user_id]
-    q = state["questions"][state["current"]]
-    quick_replies = [{"content_type": "text", "title": chr(65+i), "payload": chr(65+i)} for i in range(len(q["options"]))]
-    send_message(user_id, format_question(q), quick_replies=quick_replies)
-
-# --- OpenRouter Quiz Generation ---
-def generate_quiz_from_text(text, num_questions=5):
-    prompt = (
-        f"Generate {num_questions} multiple-choice questions on Advanced Nursing based ONLY on this text:\n"
-        f"{text}\n\n"
-        "Return JSON in format: [{\"question\":..., \"options\": [..], \"answer\": \"A\"}]."
-    )
+# --- File Processing ---
+def extract_text_from_url(file_url):
     try:
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
-            json={
-                "model": MODEL,
-                "messages": [{"role": "user", "content": prompt}]
-            }
-        )
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        quiz = json.loads(re.search(r"\[.*\]", content, re.S).group(0))
-        return quiz
+        resp = requests.get(file_url)
+        resp.raise_for_status()
+        content = resp.content
+        if file_url.lower().endswith(".pdf"):
+            pdf = PdfReader(BytesIO(content))
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+        elif file_url.lower().endswith((".docx", ".doc")):
+            doc = docx.Document(BytesIO(content))
+            return "\n".join(p.text for p in doc.paragraphs)
+        else:
+            return content.decode("utf-8", errors="ignore")
     except Exception as e:
-        print("OpenRouter failed:", e)
-        return fallback_questions(num_questions)
-
-# --- Fallback ---
-def fallback_questions(n=5):
-    questions = [
-        {
-            "question": "Nursing interventions for COPD include administering bronchodilators and encouraging deep breathing exercises.",
-            "options": ["COPD", "Bronchiectasis", "Asthma", "Lung cancer"],
-            "answer": "A"
-        },
-        {
-            "question": "Which electrolyte imbalance is most likely with diuretic use?",
-            "options": ["Hyperkalemia", "Hypokalemia", "Hypernatremia", "Hyponatremia"],
-            "answer": "B"
-        },
-        {
-            "question": "What position improves oxygenation in acute respiratory distress?",
-            "options": ["Prone", "Supine", "High Fowler's", "Trendelenburg"],
-            "answer": "A"
-        },
-        {
-            "question": "Which is a priority nursing diagnosis for a client with pneumonia?",
-            "options": ["Risk for falls", "Impaired gas exchange", "Imbalanced nutrition", "Chronic pain"],
-            "answer": "B"
-        },
-        {
-            "question": "Which oxygen delivery method provides the highest concentration?",
-            "options": ["Nasal cannula", "Simple mask", "Non-rebreather mask", "Venturi mask"],
-            "answer": "C"
-        }
-    ]
-    return questions[:n]
-
-# --- PDF Extraction ---
-def extract_text_from_pdf(url):
-    try:
-        r = requests.get(url)
-        with open("temp.pdf", "wb") as f:
-            f.write(r.content)
-        reader = PdfReader("temp.pdf")
-        return "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    except Exception as e:
-        print("PDF extraction failed:", e)
+        print(f"File extract error: {e}")
         return ""
+
+# --- LLM ---
+def generate_quiz_from_text(text, num_q=5):
+    prompt = (
+        f"Generate {num_q} multiple-choice questions (A-D) from the text below. "
+        f"Always related to advanced nursing.\n\n"
+        f"Format strictly as:\n"
+        f"Question?\nA) ...\nB) ...\nC) ...\nD) ...\nAnswer: <LETTER>\n\n"
+        f"Text:\n{text[:3000]}"
+    )
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://your-app.com",
+        "X-Title": "FB Quiz Bot",
+    }
+    data = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+    }
+    r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+    if r.status_code != 200:
+        print(f"LLM error: {r.status_code} {r.text}")
+        return []
+    text = r.json()["choices"][0]["message"]["content"]
+    return parse_questions(text)
+
+def parse_questions(raw):
+    blocks = re.split(r"\n(?=\d+\)|Question)", raw)
+    questions = []
+    for block in blocks:
+        q_match = re.search(r"^(.*?\?)\s*A\)", block, re.S | re.M)
+        if not q_match:
+            continue
+        question = q_match.group(1).strip()
+        opts = re.findall(r"([A-D])\)\s*(.+)", block)
+        ans_match = re.search(r"Answer:\s*([A-D])", block, re.I)
+        answer = ans_match.group(1).upper() if ans_match else None
+        if len(opts) == 4 and answer:
+            questions.append({
+                "question": question,
+                "options": {opt[0]: opt[1] for opt in opts},
+                "answer": answer
+            })
+    return questions
+
+# --- Quiz Logic ---
+def start_quiz(recipient_id, questions):
+    if not questions:
+        send_message(recipient_id, "No quiz could be generated. Please try again.")
+        send_menu(recipient_id)
+        return
+    user_sessions[recipient_id] = {"state": "in_quiz", "questions": questions, "index": 0, "score": 0}
+    ask_question(recipient_id)
+
+def ask_question(recipient_id):
+    sess = user_sessions[recipient_id]
+    idx = sess["index"]
+    if idx >= len(sess["questions"]):
+        send_message(recipient_id, f"✅ Quiz finished! Score: {sess['score']}/{len(sess['questions'])}")
+        send_menu(recipient_id)
+        return
+    q = sess["questions"][idx]
+    msg = f"{q['question']}\n" + "\n".join(f"{k}) {v}" for k, v in q["options"].items())
+    send_message(recipient_id, msg)
+
+def handle_answer(recipient_id, text):
+    sess = user_sessions.get(recipient_id)
+    if not sess or sess.get("state") != "in_quiz":
+        send_menu(recipient_id)
+        return
+    q = sess["questions"][sess["index"]]
+    if text.strip().upper() == q["answer"]:
+        send_message(recipient_id, "✅ Correct!")
+        sess["score"] += 1
+    else:
+        send_message(recipient_id, f"❌ Incorrect. Correct: {q['answer']}) {q['options'][q['answer']]}")
+    sess["index"] += 1
+    ask_question(recipient_id)
 
 # --- Webhook ---
 @app.route("/webhook", methods=["GET", "POST"])
@@ -126,63 +139,53 @@ def webhook():
     if request.method == "GET":
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args.get("hub.challenge")
-        return "Invalid verification token"
+        return "Invalid token", 403
 
-    data = request.get_json()
-    print("Webhook data:", data)
+    data = request.json
+    print(f"Webhook data: {data}")
+    for entry in data.get("entry", []):
+        for event in entry.get("messaging", []):
+            sender_id = event["sender"]["id"]
+            if "message" in event:
+                if "attachments" in event["message"]:
+                    for att in event["message"]["attachments"]:
+                        if att["type"] == "file":
+                            file_url = att["payload"]["url"]
+                            text = extract_text_from_url(file_url)
+                            if not text.strip():
+                                send_message(sender_id, "Could not extract text. Please try another file.")
+                                send_menu(sender_id)
+                                return "ok", 200
+                            questions = generate_quiz_from_text(text, num_q=7)
+                            start_quiz(sender_id, questions)
+                            return "ok", 200
+                elif "text" in event["message"]:
+                    handle_text(sender_id, event["message"]["text"])
+    return "ok", 200
 
-    if "entry" in data:
-        for entry in data["entry"]:
-            for msg_event in entry.get("messaging", []):
-                sender_id = msg_event["sender"]["id"]
-
-                if "message" in msg_event:
-                    if "quick_reply" in msg_event["message"]:
-                        payload = msg_event["message"]["quick_reply"]["payload"]
-                        handle_quick_reply(sender_id, payload)
-                    elif "attachments" in msg_event["message"]:
-                        for att in msg_event["message"]["attachments"]:
-                            if att["type"] == "file":
-                                file_url = att["payload"]["url"]
-                                text = extract_text_from_pdf(file_url)
-                                questions = generate_quiz_from_text(text, num_questions=7)
-                                user_state[sender_id] = {"mode": "quiz", "questions": questions, "current": 0}
-                                send_question(sender_id)
-                    elif "text" in msg_event["message"]:
-                        handle_text(sender_id, msg_event["message"]["text"])
-
-    return "ok"
-
-def handle_quick_reply(user_id, payload):
-    state = user_state.get(user_id, {"mode": "menu"})
-    if payload == "UPLOAD_FILE":
-        send_message(user_id, "📄 Please upload your PDF file to start the quiz.")
-        state["mode"] = "await_file"
-        user_state[user_id] = state
-    elif payload == "RANDOM_QUIZ":
-        questions = generate_quiz_from_text("Advanced Nursing concepts", num_questions=7)
-        user_state[user_id] = {"mode": "quiz", "questions": questions, "current": 0}
-        send_question(user_id)
-    elif state.get("mode") == "quiz":
-        current_q = state["questions"][state["current"]]
-        correct_letter = current_q["answer"].strip().upper()
-        if payload.strip().upper() == correct_letter:
-            send_message(user_id, "✅ Correct!")
+def handle_text(sender_id, text):
+    sess = user_sessions.get(sender_id, {"state": "awaiting_menu"})
+    if sess["state"] == "awaiting_menu":
+        if text.strip() == "1":
+            send_message(sender_id, "Please upload your file now.")
+            user_sessions[sender_id] = {"state": "awaiting_file"}
+        elif text.strip() == "2":
+            send_message(sender_id, "Enter a nursing topic:")
+            user_sessions[sender_id] = {"state": "awaiting_topic"}
+        elif text.strip() == "3":
+            questions = generate_quiz_from_text("Advanced nursing", num_q=7)
+            start_quiz(sender_id, questions)
         else:
-            send_message(user_id, f"❌ Incorrect. Correct: {correct_letter}) {current_q['options'][ord(correct_letter)-65]}")
-        state["current"] += 1
-        if state["current"] < len(state["questions"]):
-            send_question(user_id)
-        else:
-            send_message(user_id, "🎉 Quiz complete!")
-            show_main_menu(user_id)
-
-def handle_text(user_id, text):
-    state = user_state.get(user_id, {"mode": "menu"})
-    if state["mode"] == "menu":
-        show_main_menu(user_id)
-    elif state["mode"] == "quiz":
-        handle_quick_reply(user_id, text)
+            send_menu(sender_id)
+    elif sess["state"] == "awaiting_topic":
+        questions = generate_quiz_from_text(text, num_q=7)
+        start_quiz(sender_id, questions)
+    elif sess["state"] == "in_quiz":
+        handle_answer(sender_id, text)
+    elif sess["state"] == "awaiting_file":
+        send_message(sender_id, "Please send a file, not text.")
+    else:
+        send_menu(sender_id)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
