@@ -151,9 +151,9 @@ def generate_quiz_from_text(text, num_questions=5):
         return fallback_dummy_quiz()
 
     prompt = f"""
-You are a strict quiz generator focused on nursing/medical content.
+You are a strict quiz generator focused on advance nursing/medical content.
 Given the following lesson text, generate exactly {num_questions} fill-in-the-blank multiple-choice questions.
-Return JSON array only, each item has: question (string with '_____'), options (array of 3-4 strings), answer_index (0-based int).
+Return JSON array only, each item has: question (string with '_____'), options (array of 3-4 strings), answer_index (0-based int). choice format is 'A ) The Answer'
 Lesson text:
 {text}
 """
