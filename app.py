@@ -77,7 +77,7 @@ def extract_text_from_url(file_url):
 def generate_quiz_from_text(text, num_q=5):
     prompt = (
         f"Generate {num_q} multiple-choice questions (A-D) from the text below. "
-        f"Questions must be about advanced nursing topics and lessons only\n\n"
+        f"Questions must be about advanced nursing topics and lessons only. for example: cardiovascular system\n\n"
         f"Strict format:\n"
         f"Question?\nA) ...\nB) ...\nC) ...\nD) ...\nAnswer: <LETTER>\n\n"
         f"Text:\n{text[:3000]}"
