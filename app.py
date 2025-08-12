@@ -227,6 +227,19 @@ def handle_text(sender_id, text):
         send_message(sender_id, "📄 Please send a file, not text.")
     else:
         send_menu(sender_id)
+        
+        
+def setup_get_started_button():
+    url = f"https://graph.facebook.com/v17.0/me/messenger_profile?access_token={PAGE_ACCESS_TOKEN}"
+    payload = {
+        "get_started": {"payload": "GET_STARTED"}
+    }
+    r = requests.post(url, json=payload)
+    if r.status_code != 200:
+        print(f"Error setting Get Started: {r.status_code} {r.text}")
+    else:
+        print("✅ Get Started button set.")
 
 if __name__ == "__main__":
+    setup_get_started_button()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
