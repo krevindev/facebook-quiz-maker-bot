@@ -134,11 +134,22 @@ def ask_question(recipient_id):
         send_message(recipient_id, f"✅ Quiz finished! Score: {sess['score']}/{len(sess['questions'])}")
         send_menu(recipient_id)
         return
+    
     q = sess["questions"][idx]
+    # Build the message with question + choices
+    question_text = (
+        f"{q['question']}\n"
+        f"A) {q['options']['A']}\n"
+        f"B) {q['options']['B']}\n"
+        f"C) {q['options']['C']}\n"
+        f"D) {q['options']['D']}"
+    )
+    
+    # Send question with quick replies A-D
     send_quick_replies(
         recipient_id,
-        q['question'],
-        [f"A) {q['options']['A']}", f"B) {q['options']['B']}", f"C) {q['options']['C']}", f"D) {q['options']['D']}"]
+        question_text,
+        ["A", "B", "C", "D"]
     )
 
 def handle_answer(recipient_id, text):
