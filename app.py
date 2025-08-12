@@ -51,7 +51,7 @@ def send_menu(recipient_id):
     send_quick_replies(
         recipient_id,
         "📋 Main Menu:\nChoose an option:",
-        ["1️⃣ Upload a file for quiz", "2️⃣ Topic-based advanced nursing quiz", "3️⃣ Random advanced nursing quiz"]
+        ["1️⃣ Upload a file for quiz", "2️⃣ Topic-based advanced medical quiz", "3️⃣ Random medical quiz"]
     )
     user_sessions[recipient_id] = {"state": "awaiting_menu"}
 
@@ -77,7 +77,7 @@ def extract_text_from_url(file_url):
 def generate_quiz_from_text(text, num_q=5):
     prompt = (
         f"Generate {num_q} multiple-choice questions (A-D) from the text below. "
-        f"Questions must be about advanced nursing concepts only.\n\n"
+        f"Questions must be about advanced nursing topics and lessons only\n\n"
         f"Strict format:\n"
         f"Question?\nA) ...\nB) ...\nC) ...\nD) ...\nAnswer: <LETTER>\n\n"
         f"Text:\n{text[:3000]}"
@@ -193,7 +193,7 @@ def webhook():
 
                             cleaned_text = clean_text(text)
                             if len(cleaned_text.split()) < 50:
-                                send_message(sender_id, "⚠️ Not enough readable text. Using Advanced Nursing fallback.")
+                                send_message(sender_id, "⚠️ Not enough readable text. Using Advanced Medical fallback.")
                                 cleaned_text = "Advanced Nursing concepts"
 
                             questions = generate_quiz_from_text(cleaned_text, num_q=7)
@@ -211,7 +211,7 @@ def handle_text(sender_id, text):
             send_message(sender_id, "📄 Please upload your file now.")
             user_sessions[sender_id] = {"state": "awaiting_file"}
         elif text.startswith("2"):
-            send_message(sender_id, "📝 Enter a nursing topic:")
+            send_message(sender_id, "📝 Enter a medical topic:")
             user_sessions[sender_id] = {"state": "awaiting_topic"}
         elif text.startswith("3"):
             questions = generate_quiz_from_text("Advanced Nursing concepts", num_q=7)
