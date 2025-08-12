@@ -14,8 +14,17 @@ MODEL = "mistralai/mixtral-8x7b-instruct"
 
 app = Flask(__name__)
 
-# In-memory session store
+# In-memory session store (stateless-ish)
 user_sessions = {}
+
+# --- Utilities ---
+def clean_text(text):
+    text = re.sub(r'\s+', ' ', text)  
+    text = re.sub(r'/[A-Za-z0-9]+', '', text)  
+    text = re.sub(r'[^\x20-\x7E]+', ' ', text)  
+    text = re.sub(r'\b(?:BT|ET|Tf|Td|Tj|EMC)\b', '', text)  
+    lines = [line for line in text.splitlines() if re.search(r'[A-Za-z]', line)]
+    return ' '.join(lines).strip()
 
 # --- FB Send Functions ---
 def send_message(recipient_id, text):
@@ -26,13 +35,23 @@ def send_message(recipient_id, text):
     if r.status_code != 200:
         print(f"FB send error: {r.status_code} {r.text}")
 
+def send_quick_replies(recipient_id, text, replies):
+    """Send Facebook Quick Replies"""
+    url = f"https://graph.facebook.com/v17.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    quick_replies = [{"content_type": "text", "title": r, "payload": r} for r in replies]
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": text, "quick_replies": quick_replies}
+    }
+    r = requests.post(url, json=payload)
+    if r.status_code != 200:
+        print(f"FB quick reply send error: {r.status_code} {r.text}")
+
 def send_menu(recipient_id):
-    send_message(recipient_id, 
-        "📋 Main Menu:\n"
-        "1️⃣ Upload a file for quiz\n"
-        "2️⃣ Topic-based advanced nursing quiz\n"
-        "3️⃣ Random advanced nursing quiz\n\n"
-        "Please reply with 1, 2, or 3."
+    send_quick_replies(
+        recipient_id,
+        "📋 Main Menu:\nChoose an option:",
+        ["1️⃣ Upload a file for quiz", "2️⃣ Topic-based advanced nursing quiz", "3️⃣ Random advanced nursing quiz"]
     )
     user_sessions[recipient_id] = {"state": "awaiting_menu"}
 
@@ -58,8 +77,8 @@ def extract_text_from_url(file_url):
 def generate_quiz_from_text(text, num_q=5):
     prompt = (
         f"Generate {num_q} multiple-choice questions (A-D) from the text below. "
-        f"Always related to advanced nursing.\n\n"
-        f"Format strictly as:\n"
+        f"Questions must be about advanced nursing concepts only.\n\n"
+        f"Strict format:\n"
         f"Question?\nA) ...\nB) ...\nC) ...\nD) ...\nAnswer: <LETTER>\n\n"
         f"Text:\n{text[:3000]}"
     )
@@ -116,8 +135,11 @@ def ask_question(recipient_id):
         send_menu(recipient_id)
         return
     q = sess["questions"][idx]
-    msg = f"{q['question']}\n" + "\n".join(f"{k}) {v}" for k, v in q["options"].items())
-    send_message(recipient_id, msg)
+    send_quick_replies(
+        recipient_id,
+        q['question'],
+        [f"A) {q['options']['A']}", f"B) {q['options']['B']}", f"C) {q['options']['C']}", f"D) {q['options']['D']}"]
+    )
 
 def handle_answer(recipient_id, text):
     sess = user_sessions.get(recipient_id)
@@ -125,7 +147,7 @@ def handle_answer(recipient_id, text):
         send_menu(recipient_id)
         return
     q = sess["questions"][sess["index"]]
-    if text.strip().upper() == q["answer"]:
+    if text.strip().upper().startswith(q["answer"]):
         send_message(recipient_id, "✅ Correct!")
         sess["score"] += 1
     else:
@@ -152,13 +174,21 @@ def webhook():
                         if att["type"] == "file":
                             file_url = att["payload"]["url"]
                             text = extract_text_from_url(file_url)
+
                             if not text.strip():
-                                send_message(sender_id, "Could not extract text. Please try another file.")
+                                send_message(sender_id, "❌ Could not extract text. Please try another file.")
                                 send_menu(sender_id)
                                 return "ok", 200
-                            questions = generate_quiz_from_text(text, num_q=7)
+
+                            cleaned_text = clean_text(text)
+                            if len(cleaned_text.split()) < 50:
+                                send_message(sender_id, "⚠️ Not enough readable text. Using Advanced Nursing fallback.")
+                                cleaned_text = "Advanced Nursing concepts"
+
+                            questions = generate_quiz_from_text(cleaned_text, num_q=7)
                             start_quiz(sender_id, questions)
                             return "ok", 200
+
                 elif "text" in event["message"]:
                     handle_text(sender_id, event["message"]["text"])
     return "ok", 200
@@ -166,14 +196,14 @@ def webhook():
 def handle_text(sender_id, text):
     sess = user_sessions.get(sender_id, {"state": "awaiting_menu"})
     if sess["state"] == "awaiting_menu":
-        if text.strip() == "1":
-            send_message(sender_id, "Please upload your file now.")
+        if text.startswith("1"):
+            send_message(sender_id, "📄 Please upload your file now.")
             user_sessions[sender_id] = {"state": "awaiting_file"}
-        elif text.strip() == "2":
-            send_message(sender_id, "Enter a nursing topic:")
+        elif text.startswith("2"):
+            send_message(sender_id, "📝 Enter a nursing topic:")
             user_sessions[sender_id] = {"state": "awaiting_topic"}
-        elif text.strip() == "3":
-            questions = generate_quiz_from_text("Advanced nursing", num_q=7)
+        elif text.startswith("3"):
+            questions = generate_quiz_from_text("Advanced Nursing concepts", num_q=7)
             start_quiz(sender_id, questions)
         else:
             send_menu(sender_id)
@@ -183,7 +213,7 @@ def handle_text(sender_id, text):
     elif sess["state"] == "in_quiz":
         handle_answer(sender_id, text)
     elif sess["state"] == "awaiting_file":
-        send_message(sender_id, "Please send a file, not text.")
+        send_message(sender_id, "📄 Please send a file, not text.")
     else:
         send_menu(sender_id)
 
