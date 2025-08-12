@@ -224,13 +224,15 @@ def send_quiz_question_from_db(recipient_id, lesson_row):
     for idx, q in enumerate(quiz):
         if idx not in user_progress:
             buttons = []
-            # Facebook Messenger allows max 3 buttons in button template
             for option_idx, option in enumerate(q["options"][:3]):
                 buttons.append({
                     "type": "postback",
                     "title": option if len(option) <= 20 else option[:17] + "...",
                     "payload": f"QUIZ_ANSWER_{lesson_id}_{idx}_{option_idx}"
                 })
+            if not buttons:
+                send_message(recipient_id, "⚠️ No valid options available for the question.")
+                return None
             message_payload = {
                 "attachment": {
                     "type": "template",
