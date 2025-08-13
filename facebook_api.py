@@ -29,7 +29,7 @@ def send_menu(recipient_id):
         send_quick_replies(
             recipient_id,
             "📋 Main Menu:\nChoose an option:",
-            ["1️⃣ Upload a file for quiz", "2️⃣ Enter topic for quiz", "3️⃣ Random quiz"]
+            ["1️⃣ Upload a file for quiz", "2️⃣ Enter a topic for quiz", "3️⃣ Random quiz"]
         )
     except Exception as e:
         print(f"send_menu error: {e}")

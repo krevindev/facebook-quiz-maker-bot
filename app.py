@@ -27,6 +27,7 @@ def ask_question(user_id):
     if idx >= len(questions):
         send_message(user_id, f"✅ Quiz finished! Score: {sess.get('score',0)}/{len(questions)}")
         send_menu(user_id)
+        set_session(user_id, {"state": "awaiting_menu"})
         return
 
     q = questions[idx]
