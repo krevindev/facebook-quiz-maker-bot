@@ -178,7 +178,7 @@ def ask_question(recipient_id):
     
     q = sess["questions"][idx]
     question_text = (
-        f"{q['question']}\n"
+        f"{q['question']}\n\n"
         f"A. {q['options']['A']}\n"
         f"B. {q['options']['B']}\n"
         f"C. {q['options']['C']}\n"
