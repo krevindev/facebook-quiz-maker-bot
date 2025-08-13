@@ -17,6 +17,7 @@ def start_quiz(user_id, questions):
     set_session(user_id, {"state": "in_quiz", "questions": questions, "index": 0, "score": 0})
     ask_question(user_id)
 
+# Updated ask_question to add a "Quit" quick reply
 def ask_question(user_id):
     sess = get_session(user_id)
     if not sess:
@@ -32,11 +33,19 @@ def ask_question(user_id):
 
     q = questions[idx]
     question_text = format_question_message(q)
-    send_quick_replies(user_id, question_text, ["A", "B", "C", "D"])
+    # Add Quit as quick reply option
+    send_quick_replies(user_id, question_text, ["A", "B", "C", "D", "Quit"])
 
+# Updated handle_answer to process Quit command
 def handle_answer(user_id, text):
     sess = get_session(user_id)
     if not sess or sess.get("state") != "in_quiz":
+        send_menu(user_id)
+        return
+
+    if text.strip().lower() == "quit":
+        send_message(user_id, "🛑 Quiz exited. Returning to main menu.")
+        set_session(user_id, {"state": "awaiting_menu"})
         send_menu(user_id)
         return
 
