@@ -2,9 +2,11 @@ import os
 import re
 import requests
 from flask import Flask, request
-from PyPDF2 import PdfReader
-import docx
 from io import BytesIO
+
+# Install pdfplumber: pip install pdfplumber
+import pdfplumber
+import docx
 
 # --- CONFIG ---
 VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "verify_token")
@@ -28,9 +30,8 @@ Math: Algebra, geometry, probability, fractions.
 # --- Utilities ---
 def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'[^\x20-\x7E]+', ' ', text)
-    lines = [line.strip() for line in text.splitlines() if len(line.strip()) > 20]
-    return ' '.join(lines).strip()
+    text = re.sub(r'\b(?:BT|ET|Tf|Td|Tj|EMC)\b', '', text)
+    return text.strip()
 
 # --- FB Send Functions ---
 def send_message(recipient_id, text):
@@ -72,8 +73,13 @@ def extract_text_from_url(file_url):
         resp.raise_for_status()
         content = resp.content
         if file_url.lower().endswith(".pdf"):
-            pdf = PdfReader(BytesIO(content))
-            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+            text = ""
+            with pdfplumber.open(BytesIO(content)) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+            return text
         elif file_url.lower().endswith((".docx", ".doc")):
             doc = docx.Document(BytesIO(content))
             return "\n".join(p.text for p in doc.paragraphs)
@@ -209,7 +215,6 @@ def handle_text(sender_id, text):
             send_message(sender_id, "📝 Enter a topic for the quiz:")
             user_sessions[sender_id] = {"state": "awaiting_topic"}
         elif text.startswith("3"):
-            # Random quiz using default KB
             questions = ai_generate_quiz(DEFAULT_KB, num_q=7)
             start_quiz(sender_id, questions)
         else:
