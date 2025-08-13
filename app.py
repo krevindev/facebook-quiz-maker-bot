@@ -4,7 +4,6 @@ import requests
 from flask import Flask, request
 from io import BytesIO
 
-# Install pdfplumber: pip install pdfplumber
 import pdfplumber
 import docx
 
@@ -29,8 +28,8 @@ Math: Algebra, geometry, probability, fractions.
 
 # --- Utilities ---
 def clean_text(text):
+    # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'\b(?:BT|ET|Tf|Td|Tj|EMC)\b', '', text)
     return text.strip()
 
 # --- FB Send Functions ---
@@ -67,24 +66,44 @@ def send_menu(recipient_id):
     user_sessions[recipient_id] = {"state": "awaiting_menu"}
 
 # --- File Processing ---
-def extract_text_from_url(file_url):
+def extract_pdf_text_only(file_url):
+    """Extract visible text only from a text-based PDF."""
     try:
         resp = requests.get(file_url, timeout=20)
         resp.raise_for_status()
         content = resp.content
+        text = ""
+
+        with pdfplumber.open(BytesIO(content)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text() or ""
+                lines = page_text.splitlines()
+                for line in lines:
+                    # Remove lines starting with PDF operators/metadata
+                    if re.match(r'^\s*(%|/|BT|ET|Tf|Td|Tj|EMC)', line):
+                        continue
+                    # Keep lines with actual letters/numbers
+                    if re.search(r'[A-Za-z0-9]', line):
+                        text += line + "\n"
+
+        return text.strip()
+    except Exception as e:
+        print(f"PDF extract error: {e}")
+        return ""
+
+def extract_text_from_url(file_url):
+    try:
         if file_url.lower().endswith(".pdf"):
-            text = ""
-            with pdfplumber.open(BytesIO(content)) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-            return text
+            return extract_pdf_text_only(file_url)
         elif file_url.lower().endswith((".docx", ".doc")):
-            doc = docx.Document(BytesIO(content))
+            resp = requests.get(file_url, timeout=20)
+            resp.raise_for_status()
+            doc = docx.Document(BytesIO(resp.content))
             return "\n".join(p.text for p in doc.paragraphs)
         else:
-            return content.decode("utf-8", errors="ignore")
+            resp = requests.get(file_url, timeout=20)
+            resp.raise_for_status()
+            return resp.content.decode("utf-8", errors="ignore")
     except Exception as e:
         print(f"File extract error: {e}")
         return ""
@@ -106,8 +125,6 @@ def ai_generate_quiz(text, num_q=5):
         resp_json = r.json()
         content = resp_json["choices"][0]["message"]["content"].strip()
         return parse_questions(content)
-    except requests.Timeout:
-        return []
     except requests.RequestException as e:
         print(f"LLM request failed: {e}")
         return []
