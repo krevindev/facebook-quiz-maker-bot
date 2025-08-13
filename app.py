@@ -32,6 +32,18 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
+def preprocess_for_quiz(text):
+    """Remove headers, course codes, checkmarks, and non-lesson content."""
+    lines = text.splitlines()
+    content_lines = []
+    for line in lines:
+        line = line.strip()
+        # Skip empty lines, course codes, numbers at the start, or checklist symbols
+        if not line or re.match(r'^(NCMB|BACHELOR|COURSE|✓|[0-9]+)', line):
+            continue
+        content_lines.append(line)
+    return " ".join(content_lines)
+
 # --- FB Send Functions ---
 def send_message(recipient_id, text):
     url = f"https://graph.facebook.com/v17.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
@@ -66,15 +78,11 @@ def send_menu(recipient_id):
     user_sessions[recipient_id] = {"state": "awaiting_menu"}
 
 # --- File Processing ---
-def extract_pdf_text_only(file_url):
-    """Extract visible text only from a text-based PDF."""
+def extract_pdf_text_only(file_path):
+    """Extract visible text only from a text-based PDF (local or URL)."""
     try:
-        resp = requests.get(file_url, timeout=20)
-        resp.raise_for_status()
-        content = resp.content
         text = ""
-
-        with pdfplumber.open(BytesIO(content)) as pdf:
+        with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text() or ""
                 lines = page_text.splitlines()
@@ -85,7 +93,6 @@ def extract_pdf_text_only(file_url):
                     # Keep lines with actual letters/numbers
                     if re.search(r'[A-Za-z0-9]', line):
                         text += line + "\n"
-
         return text.strip()
     except Exception as e:
         print(f"PDF extract error: {e}")
@@ -94,7 +101,9 @@ def extract_pdf_text_only(file_url):
 def extract_text_from_url(file_url):
     try:
         if file_url.lower().endswith(".pdf"):
-            return extract_pdf_text_only(file_url)
+            resp = requests.get(file_url, timeout=20)
+            resp.raise_for_status()
+            return extract_pdf_text_only(BytesIO(resp.content))
         elif file_url.lower().endswith((".docx", ".doc")):
             resp = requests.get(file_url, timeout=20)
             resp.raise_for_status()
@@ -209,13 +218,14 @@ def webhook():
                     for att in event["message"]["attachments"]:
                         if att["type"] == "file":
                             file_url = att["payload"]["url"]
-                            text = extract_text_from_url(file_url)
-                            cleaned_text = clean_text(text)
-                            if not cleaned_text:
+                            extracted_text = extract_text_from_url(file_url)
+                            cleaned_text = clean_text(extracted_text)
+                            quiz_text = preprocess_for_quiz(cleaned_text)
+                            if not quiz_text.strip():
                                 send_message(sender_id, "❌ Could not extract meaningful text from this file. Try another file.")
                                 send_menu(sender_id)
                                 return "ok", 200
-                            questions = ai_generate_quiz(cleaned_text, num_q=7)
+                            questions = ai_generate_quiz(quiz_text, num_q=7)
                             start_quiz(sender_id, questions)
                             return "ok", 200
                 elif "text" in event["message"]:
