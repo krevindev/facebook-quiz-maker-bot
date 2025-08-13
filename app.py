@@ -5,7 +5,6 @@ from flask import Flask, request
 from PyPDF2 import PdfReader
 import docx
 from io import BytesIO
-import time
 
 # --- CONFIG ---
 VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN", "verify_token")
@@ -18,13 +17,19 @@ app = Flask(__name__)
 # In-memory session store
 user_sessions = {}
 
+# --- Default Knowledge Base for Random Quiz ---
+DEFAULT_KB = """
+Physics: Newton's laws, energy, and motion.
+Biology: Cells, photosynthesis, human anatomy basics.
+History: Ancient civilizations, world wars, key events.
+Math: Algebra, geometry, probability, fractions.
+"""
+
 # --- Utilities ---
 def clean_text(text):
     text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'/[A-Za-z0-9]+', '', text)
     text = re.sub(r'[^\x20-\x7E]+', ' ', text)
-    text = re.sub(r'\b(?:BT|ET|Tf|Td|Tj|EMC)\b', '', text)
-    lines = [line for line in text.splitlines() if re.search(r'[A-Za-z]', line)]
+    lines = [line.strip() for line in text.splitlines() if len(line.strip()) > 20]
     return ' '.join(lines).strip()
 
 # --- FB Send Functions ---
@@ -182,12 +187,12 @@ def webhook():
                         if att["type"] == "file":
                             file_url = att["payload"]["url"]
                             text = extract_text_from_url(file_url)
-                            if not text.strip():
-                                send_message(sender_id, "❌ Could not extract text. Try another file.")
+                            cleaned_text = clean_text(text)
+                            if not cleaned_text:
+                                send_message(sender_id, "❌ Could not extract meaningful text from this file. Try another file.")
                                 send_menu(sender_id)
                                 return "ok", 200
-                            cleaned_text = clean_text(text)
-                            questions = ai_generate_quiz(cleaned_text or "General knowledge text", num_q=7)
+                            questions = ai_generate_quiz(cleaned_text, num_q=7)
                             start_quiz(sender_id, questions)
                             return "ok", 200
                 elif "text" in event["message"]:
@@ -204,7 +209,8 @@ def handle_text(sender_id, text):
             send_message(sender_id, "📝 Enter a topic for the quiz:")
             user_sessions[sender_id] = {"state": "awaiting_topic"}
         elif text.startswith("3"):
-            questions = ai_generate_quiz("General knowledge concepts", num_q=7)
+            # Random quiz using default KB
+            questions = ai_generate_quiz(DEFAULT_KB, num_q=7)
             start_quiz(sender_id, questions)
         else:
             send_menu(sender_id)
@@ -218,6 +224,7 @@ def handle_text(sender_id, text):
     else:
         send_menu(sender_id)
 
+# --- Get Started Button ---
 def setup_get_started_button():
     url = f"https://graph.facebook.com/v17.0/me/messenger_profile?access_token={PAGE_ACCESS_TOKEN}"
     payload = {"get_started": {"payload": "GET_STARTED"}}
